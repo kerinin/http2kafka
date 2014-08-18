@@ -1,76 +1,78 @@
 package main
 
 import (
-  "flag"
-  "time"
-  "net/http"
-  "encoding/json"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"net/http"
+	"time"
 
-  "code.google.com/p/go-uuid/uuid"
-  "github.com/Shopify/sarama"
+	"code.google.com/p/go-uuid/uuid"
+	"github.com/Shopify/sarama"
 )
 
 const TimeoutStatus = 500
 const TimeoutResponse = "Request timed out.  Sorry dude"
 
 type UniqueRequest struct {
-  UUID string
-  http.Request
+	UUID string
+	http.Request
 }
 
 type Response struct {
-  UUID string
-  Status int
-  Reply string
+	UUID   string
+	Status int
+	Reply  string
 }
 
-// func (r UniqueRequest) Marshal(v interface{}) ([]byte, error) {
-  // make JSON, ignore response writer
-// }
-
 func main() {
-  // Parse options
-  kafkaHost := flag.String("kafka-host", "localhost", "Kafka broker to connect to")
-  requestTopic := flag.String("request-topic", "requests", "Kafka topic incoming request will be written to")
-  responseTopic := flag.String("response-topic", "responses", "Kafka topic outgoing responses will be written to")
-  consumerGroup := flag.String("consumer-group", "http2kafka", "Consumer group for tracking offsets")
-  flag.Parse()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-  hosts := []string{*kafkaHost}
-  q := new(Queue)
-  k := NewKafka(hosts, *requestTopic, *responseTopic, *consumerGroup)
-  defer k.Close()
+	// Parse options
+	kafkaHost := flag.String("kafka-host", "localhost", "Kafka broker to connect to")
+	requestTopic := flag.String("request-topic", "requests", "Kafka topic incoming request will be written to")
+	responseTopic := flag.String("response-topic", "responses", "Kafka topic outgoing responses will be written to")
+	consumerGroup := flag.String("consumer-group", "http2kafka", "Consumer group for tracking offsets")
+	flag.Parse()
+	fmt.Printf("Starting http2kafka with args: kafka-host:%v, request-topic:%v, response-topic:%v, consumer-group:%v\n", *kafkaHost, *requestTopic, *responseTopic, *consumerGroup)
 
-  go k.Consume(func(e *sarama.ConsumerEvent) {
-	// r := json.Unmarshal(e.value, Response)
-	// q.Dequeue(r.UUID(), r)
-  })
+	hosts := []string{*kafkaHost}
+	q := new(Queue)
+	k := NewKafka(hosts, *requestTopic, *responseTopic, *consumerGroup)
+	defer k.Close()
 
-  http.HandleFunc("*", func(w http.ResponseWriter, r *http.Request) { 
-	id := uuid.NewRandom().String()
-	ur := UniqueRequest{id, *r}
+	go k.Consume(func(e *sarama.ConsumerEvent) {
+		var r Response
+		json.Unmarshal(e.Value, r)
+		q.Dequeue(r.UUID, r)
+	})
 
-	c := make(chan Response)
-	defer q.Delete(id)
+	http.HandleFunc("*", func(w http.ResponseWriter, r *http.Request) {
+		id := uuid.NewRandom().String()
+		ur := UniqueRequest{id, *r}
 
-	q.Enqueue(id, c)
+		c := make(chan Response)
+		defer q.Delete(id)
 
-	requestJSON, err := json.Marshal(ur) 
-	if err != nil {
-	  panic(err)
-	}
-	k.Produce(nil, sarama.StringEncoder(requestJSON))
+		q.Enqueue(id, c)
 
-	// Block until response is dequeued or times out
-	select {
-	case response := <-c:
-	  w.WriteHeader(response.Status)
-	  w.Write([]byte(response.Reply))
+		requestJSON, err := json.Marshal(ur)
+		if err != nil {
+			panic(err)
+		}
+		k.Produce(nil, sarama.StringEncoder(requestJSON))
 
-	case <-time.After(60 * time.Second):
-	  w.WriteHeader(TimeoutStatus)
-	  w.Write([]byte(TimeoutResponse))
-	}
-  })
-  http.ListenAndServe(":8080", nil)
+		// Block until response is dequeued or times out
+		select {
+		case response := <-c:
+			w.WriteHeader(response.Status)
+			w.Write([]byte(response.Reply))
+
+		case <-time.After(60 * time.Second):
+			w.WriteHeader(TimeoutStatus)
+			w.Write([]byte(TimeoutResponse))
+		}
+	})
+	http.ListenAndServe(":8080", nil)
 }
