@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"code.google.com/p/go-uuid/uuid"
 	"github.com/Shopify/sarama"
@@ -59,10 +62,18 @@ func (k *Kafka) Consume(f ConsumeHandler) {
 }
 
 func (k *Kafka) consumePartition(p int32, f ConsumeHandler) {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
 	consumer, err := sarama.NewConsumer(k.Client, k.ConsumeTopic, p, k.ConsumerGroup, sarama.NewConsumerConfig())
 	defer func() {
-		fmt.Println("Closing Kafka Consumer", p)
-		consumer.Close()
+		err := consumer.Close()
+
+		if err != nil {
+			fmt.Println("Closed Kafka Consumer", p)
+		} else {
+			fmt.Println("Error closing Kafka Consumer", p, err)
+		}
 	}()
 
 	if err != nil {
@@ -71,12 +82,19 @@ func (k *Kafka) consumePartition(p int32, f ConsumeHandler) {
 		fmt.Println("Kafka Consumer Ready", p)
 	}
 
-	for event := range consumer.Events() {
-		if event.Err != nil {
-			panic(event.Err)
-		}
+ConsumeLoop:
+	for {
+		select {
+		case event := <-consumer.Events():
+			if event.Err != nil {
+				panic(event.Err)
+			}
 
-		f(event)
+			f(event)
+		case s := <-sigs:
+			fmt.Println("Kafka Consumer received signal", p, s)
+			break ConsumeLoop
+		}
 	}
 }
 

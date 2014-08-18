@@ -9,6 +9,7 @@ import (
 
 	"code.google.com/p/go-uuid/uuid"
 	"github.com/Shopify/sarama"
+	"github.com/stretchr/graceful"
 )
 
 const TimeoutStatus = 500
@@ -26,9 +27,6 @@ type Response struct {
 }
 
 func main() {
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-
 	// Parse options
 	kafkaHost := flag.String("kafka-host", "localhost", "Kafka broker to connect to")
 	requestTopic := flag.String("request-topic", "requests", "Kafka topic incoming request will be written to")
@@ -48,7 +46,8 @@ func main() {
 		q.Dequeue(r.UUID, r)
 	})
 
-	http.HandleFunc("*", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("*", func(w http.ResponseWriter, r *http.Request) {
 		id := uuid.NewRandom().String()
 		ur := UniqueRequest{id, *r}
 
@@ -74,5 +73,7 @@ func main() {
 			w.Write([]byte(TimeoutResponse))
 		}
 	})
-	http.ListenAndServe(":8080", nil)
+	graceful.Run(":8080", 60*time.Second, mux)
+
+	fmt.Println("At end of main, exiting")
 }

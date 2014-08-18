@@ -135,7 +135,14 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
     inline: "sudo mv kafka_2.10-0.8.1.1/* /usr/local/kafka/"
 
   config.vm.provision "shell",
-    inline: "sudo apt-get update && sudo apt-get -y install java7-jdk golang-go mercurial git"
+    inline: "sudo apt-get update && sudo apt-get -y install java7-jdk mercurial git bison"
+
+  config.vm.provision "shell",
+    inline: "bash < <(curl -s -S -L https://raw.githubusercontent.com/moovweb/gvm/master/binscripts/gvm-installer)"
+  config.vm.provision "shell",
+    inline: "source /home/vagrant/.gvm/scripts/gvm"
+  config.vm.provision "shell",
+    inline: "gvm install go1.3 -B"
 
   config.vm.provision "shell",
     inline: "mkdir -p ~/go/src/github.com/kerinin"
