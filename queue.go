@@ -1,7 +1,5 @@
 package main
 
-import "fmt"
-
 type Queue struct {
 	Mapping map[string]chan Response
 }
@@ -19,7 +17,7 @@ func (q *Queue) Dequeue(uuid string, m Response) {
 	c, ok := q.Mapping[uuid]
 
 	if !ok {
-		fmt.Println("Tried to respond to missing key", uuid)
+		log.Error("Tried to respond to missing key", uuid)
 		return
 	}
 

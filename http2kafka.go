@@ -3,17 +3,21 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"fmt"
 	"net/http"
 	"time"
 
 	"code.google.com/p/go-uuid/uuid"
 	"github.com/Shopify/sarama"
+	"github.com/op/go-logging"
 	"github.com/stretchr/graceful"
 )
 
+const TimeoutTime = 5 * time.Second
 const TimeoutStatus = 500
-const TimeoutResponse = "Request timed out.  Sorry dude"
+const TimeoutResponse = "Request timed out.  Sorry dude\n"
+
+var log = logging.MustGetLogger("http2kafka.main")
+var logFormat = logging.MustStringFormatter("%{level} %{message}")
 
 type UniqueRequest struct {
 	UUID string
@@ -27,13 +31,16 @@ type Response struct {
 }
 
 func main() {
+	logging.SetFormatter(logFormat)
+	logging.SetLevel(logging.DEBUG, "http2kafka.main")
+
 	// Parse options
 	kafkaHost := flag.String("kafka-host", "localhost", "Kafka broker to connect to")
 	requestTopic := flag.String("request-topic", "requests", "Kafka topic incoming request will be written to")
 	responseTopic := flag.String("response-topic", "responses", "Kafka topic outgoing responses will be written to")
 	consumerGroup := flag.String("consumer-group", "http2kafka", "Consumer group for tracking offsets")
 	flag.Parse()
-	fmt.Printf("Starting http2kafka with args: kafka-host:%v, request-topic:%v, response-topic:%v, consumer-group:%v\n", *kafkaHost, *requestTopic, *responseTopic, *consumerGroup)
+	log.Info("Starting http2kafka with args: kafka-host:%v, request-topic:%v, response-topic:%v, consumer-group:%v\n", *kafkaHost, *requestTopic, *responseTopic, *consumerGroup)
 
 	hosts := []string{*kafkaHost}
 	q := NewQueue()
@@ -48,7 +55,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println("HTTP Request received")
+		log.Debug("HTTP Request received")
 
 		id := uuid.NewRandom().String()
 		ur := UniqueRequest{id, *r}
@@ -61,29 +68,29 @@ func main() {
 			panic(err)
 		}
 
-		fmt.Println("Request ready to log:", string(requestJSON))
+		log.Debug("Request ready to log: %v", string(requestJSON))
 
 		q.Enqueue(id, c)
 		k.Produce(nil, sarama.StringEncoder(requestJSON))
 
-		fmt.Println("Request written, waiting for response")
+		log.Debug("Request written, waiting for response")
 		// Block until response is dequeued or times out
 		select {
 		case response := <-c:
-			fmt.Println("Response received, writing", id)
+			log.Debug("Response received, writing %v", id)
 			w.WriteHeader(response.Status)
 			w.Write([]byte(response.Reply))
 
-		case <-time.After(5 * time.Second):
-			fmt.Println("Timeout, giving up on ", id)
+		case <-time.After(TimeoutTime):
+			log.Error("Timeout, giving up on %v", id)
 			w.WriteHeader(TimeoutStatus)
 			w.Write([]byte(TimeoutResponse))
 		}
 	})
-	graceful.Run(":8080", 1*time.Second, mux)
-	fmt.Println("HTTP Shutdown")
+	graceful.Run(":8080", TimeoutTime, mux)
+	log.Info("HTTP Shutdown")
 
 	k.Wait()
 
-	fmt.Println("At end of main, exiting")
+	log.Debug("At end of main, exiting")
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -31,14 +30,14 @@ func NewKafka(brokers []string, produceTopic string, consumeTopic string, consum
 	if err != nil {
 		panic(err)
 	} else {
-		fmt.Println("Kafka Client connected")
+		log.Info("Kafka Client connected")
 	}
 
 	producer, err := sarama.NewProducer(client, nil)
 	if err != nil {
 		panic(err)
 	} else {
-		fmt.Println("Kafka Producer created")
+		log.Info("Kafka Producer created")
 	}
 
 	return Kafka{produceTopic, consumeTopic, consumerGroup, client, producer, *new(sync.WaitGroup)}
@@ -74,9 +73,9 @@ func (k *Kafka) consumePartition(p int32, f ConsumeHandler) {
 		err := consumer.Close()
 
 		if err != nil {
-			fmt.Println("Error closing Kafka Consumer", p, err)
+			log.Error("Error %v closing Kafka Consumer %v", err, p)
 		} else {
-			fmt.Println("Closed Kafka Consumer", p)
+			log.Info("Closed Kafka Consumer %v", p)
 		}
 
 		k.Done()
@@ -86,7 +85,7 @@ func (k *Kafka) consumePartition(p int32, f ConsumeHandler) {
 		panic(err)
 	}
 
-	fmt.Println("Kafka Consumer Ready", p)
+	log.Info("Kafka Consumer %v Ready", p)
 ConsumeLoop:
 	for {
 		select {
@@ -97,16 +96,16 @@ ConsumeLoop:
 
 			f(event)
 		case s := <-sigs:
-			fmt.Println("Kafka Consumer received signal", p, s)
+			log.Info("Kafka Consumer %v received signal %v", p, s)
 			break ConsumeLoop
 		}
 	}
 }
 
 func (k *Kafka) Close() {
-	fmt.Println("Closing Kafka Client")
+	log.Info("Closing Kafka Client")
 	k.Client.Close()
 
-	fmt.Println("Closing Kafka Producer")
+	log.Info("Closing Kafka Producer")
 	k.Producer.Close()
 }
