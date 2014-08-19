@@ -59,12 +59,13 @@ func (k *Kafka) Consume(f ConsumeHandler) {
 	}
 
 	for p := range ps {
+		k.Add(1)
 		go k.consumePartition(int32(p), f)
 	}
+	k.Done()
 }
 
 func (k *Kafka) consumePartition(p int32, f ConsumeHandler) {
-	k.Add(1)
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
