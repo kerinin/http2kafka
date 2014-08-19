@@ -40,11 +40,12 @@ func main() {
 	k := NewKafka(hosts, *requestTopic, *responseTopic, *consumerGroup)
 	defer k.Close()
 
+	consumerDone := make(chan bool)
 	go k.Consume(func(e *sarama.ConsumerEvent) {
 		var r Response
 		json.Unmarshal(e.Value, r)
 		q.Dequeue(r.UUID, r)
-	})
+	}, consumerDone)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("*", func(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +74,10 @@ func main() {
 			w.Write([]byte(TimeoutResponse))
 		}
 	})
-	graceful.Run(":8080", 60*time.Second, mux)
+	graceful.Run(":8080", 1*time.Second, mux)
+	fmt.Println("HTTP Shutdown")
+
+	<-consumerDone
 
 	fmt.Println("At end of main, exiting")
 }

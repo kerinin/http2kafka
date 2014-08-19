@@ -49,19 +49,24 @@ func (k *Kafka) Produce(key, val sarama.Encoder) {
 	}
 }
 
-func (k *Kafka) Consume(f ConsumeHandler) {
+func (k *Kafka) Consume(f ConsumeHandler, done chan bool) {
 	ps, err := k.Client.Partitions(k.ConsumeTopic)
+	w := new(Waiter)
 
 	if err != nil {
 		panic(err)
 	}
 
 	for p := range ps {
-		go k.consumePartition(int32(p), f)
+		go k.consumePartition(int32(p), f, w.Channel())
 	}
+
+	w.Wait()
+	fmt.Println("Done consuming from Kafka")
+	done <- true
 }
 
-func (k *Kafka) consumePartition(p int32, f ConsumeHandler) {
+func (k *Kafka) consumePartition(p int32, f ConsumeHandler, done chan bool) {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
@@ -74,6 +79,8 @@ func (k *Kafka) consumePartition(p int32, f ConsumeHandler) {
 		} else {
 			fmt.Println("Error closing Kafka Consumer", p, err)
 		}
+
+		done <- true
 	}()
 
 	if err != nil {
