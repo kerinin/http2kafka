@@ -6,6 +6,10 @@ type Queue struct {
 	Mapping map[string]chan Response
 }
 
+func NewQueue() Queue {
+	return Queue{make(map[string]chan Response)}
+}
+
 func (q *Queue) Enqueue(uuid string, c chan Response) {
 	q.Mapping[uuid] = c
 }

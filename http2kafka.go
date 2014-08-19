@@ -36,40 +36,46 @@ func main() {
 	fmt.Printf("Starting http2kafka with args: kafka-host:%v, request-topic:%v, response-topic:%v, consumer-group:%v\n", *kafkaHost, *requestTopic, *responseTopic, *consumerGroup)
 
 	hosts := []string{*kafkaHost}
-	q := new(Queue)
+	q := NewQueue()
 	k := NewKafka(hosts, *requestTopic, *responseTopic, *consumerGroup)
 	defer k.Close()
 
-	consumerDone := make(chan bool)
 	go k.Consume(func(e *sarama.ConsumerEvent) {
 		var r Response
 		json.Unmarshal(e.Value, r)
 		q.Dequeue(r.UUID, r)
-	}, consumerDone)
+	})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("*", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("HTTP Request received")
+
 		id := uuid.NewRandom().String()
 		ur := UniqueRequest{id, *r}
 
 		c := make(chan Response)
 		defer q.Delete(id)
 
-		q.Enqueue(id, c)
-
 		requestJSON, err := json.Marshal(ur)
 		if err != nil {
 			panic(err)
 		}
+
+		fmt.Println("Request ready to log:", string(requestJSON))
+
+		q.Enqueue(id, c)
 		k.Produce(nil, sarama.StringEncoder(requestJSON))
 
+		fmt.Println("Request written, waiting for response")
 		// Block until response is dequeued or times out
 		select {
 		case response := <-c:
+			fmt.Println("Response received, writing", id)
 			w.WriteHeader(response.Status)
 			w.Write([]byte(response.Reply))
 
-		case <-time.After(60 * time.Second):
+		case <-time.After(5 * time.Second):
+			fmt.Println("Timeout, giving up on ", id)
 			w.WriteHeader(TimeoutStatus)
 			w.Write([]byte(TimeoutResponse))
 		}
@@ -77,7 +83,7 @@ func main() {
 	graceful.Run(":8080", 1*time.Second, mux)
 	fmt.Println("HTTP Shutdown")
 
-	<-consumerDone
+	k.Wait()
 
 	fmt.Println("At end of main, exiting")
 }

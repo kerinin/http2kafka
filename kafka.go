@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"code.google.com/p/go-uuid/uuid"
@@ -17,6 +18,8 @@ type Kafka struct {
 
 	Client   *sarama.Client
 	Producer *sarama.Producer
+
+	sync.WaitGroup
 }
 
 type ConsumeHandler func(*sarama.ConsumerEvent)
@@ -38,7 +41,7 @@ func NewKafka(brokers []string, produceTopic string, consumeTopic string, consum
 		fmt.Println("Kafka Producer created")
 	}
 
-	return Kafka{produceTopic, consumeTopic, consumerGroup, client, producer}
+	return Kafka{produceTopic, consumeTopic, consumerGroup, client, producer, *new(sync.WaitGroup)}
 }
 
 func (k *Kafka) Produce(key, val sarama.Encoder) {
@@ -49,24 +52,20 @@ func (k *Kafka) Produce(key, val sarama.Encoder) {
 	}
 }
 
-func (k *Kafka) Consume(f ConsumeHandler, done chan bool) {
+func (k *Kafka) Consume(f ConsumeHandler) {
 	ps, err := k.Client.Partitions(k.ConsumeTopic)
-	w := new(Waiter)
 
 	if err != nil {
 		panic(err)
 	}
 
 	for p := range ps {
-		go k.consumePartition(int32(p), f, w.Channel())
+		go k.consumePartition(int32(p), f)
 	}
-
-	w.Wait()
-	fmt.Println("Done consuming from Kafka")
-	done <- true
 }
 
-func (k *Kafka) consumePartition(p int32, f ConsumeHandler, done chan bool) {
+func (k *Kafka) consumePartition(p int32, f ConsumeHandler) {
+	k.Add(1)
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
@@ -75,20 +74,19 @@ func (k *Kafka) consumePartition(p int32, f ConsumeHandler, done chan bool) {
 		err := consumer.Close()
 
 		if err != nil {
-			fmt.Println("Closed Kafka Consumer", p)
-		} else {
 			fmt.Println("Error closing Kafka Consumer", p, err)
+		} else {
+			fmt.Println("Closed Kafka Consumer", p)
 		}
 
-		done <- true
+		k.Done()
 	}()
 
 	if err != nil {
 		panic(err)
-	} else {
-		fmt.Println("Kafka Consumer Ready", p)
 	}
 
+	fmt.Println("Kafka Consumer Ready", p)
 ConsumeLoop:
 	for {
 		select {
